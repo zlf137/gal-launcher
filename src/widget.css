@@ -1,0 +1,139 @@
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+body {
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#widget-root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.widget {
+  position: absolute;
+  inset: 0;
+}
+
+.widget-avatar {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  width: 160px;
+  height: 160px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  outline: none;
+  animation: widget-float 3.6s ease-in-out infinite;
+}
+
+.widget-avatar-inner {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  transition: transform 180ms cubic-bezier(0.22, 1.4, 0.36, 1);
+}
+
+.widget-avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  object-position: 50% 32%;
+  background: #eef3fb;
+  border: 3px solid rgba(255, 255, 255, 0.9);
+  box-shadow:
+    0 14px 32px rgba(24, 34, 64, 0.35),
+    0 0 0 6px rgba(255, 255, 255, 0.16),
+    0 0 34px rgba(120, 170, 255, 0.35);
+}
+
+.widget-avatar:hover .widget-avatar-inner {
+  transform: scale(1.04) translateY(-2px);
+}
+
+.widget-avatar:active .widget-avatar-inner {
+  transform: scale(0.93);
+  transition-duration: 90ms;
+}
+
+.widget-avatar:focus-visible .widget-avatar-inner {
+  outline: 2px solid rgba(120, 170, 255, 0.9);
+  outline-offset: 4px;
+}
+
+@keyframes widget-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.widget-bubble {
+  position: absolute;
+  left: 12px;
+  top: 10px;
+  max-width: 240px;
+  padding: 10px 14px;
+  border-radius: 16px;
+  background: rgba(255, 250, 240, 0.97);
+  color: #3a3a44;
+  font-size: 14px;
+  line-height: 1.45;
+  word-break: break-word;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(8px) scale(0.96);
+  transform-origin: 80% 100%;
+  box-shadow:
+    0 10px 26px rgba(20, 30, 60, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.7);
+  transition:
+    opacity 220ms ease,
+    transform 260ms cubic-bezier(0.22, 1.3, 0.36, 1);
+}
+
+.widget-bubble.visible {
+  opacity: 1;
+  transform: none;
+}
+
+.widget-bubble::after {
+  content: "";
+  position: absolute;
+  right: 42px;
+  bottom: -6px;
+  width: 13px;
+  height: 13px;
+  border-radius: 2px;
+  background: inherit;
+  transform: rotate(45deg);
+  box-shadow: 2px 2px 4px rgba(20, 30, 60, 0.08);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .widget-avatar {
+    animation: none;
+  }
+  .widget-bubble {
+    transition: none;
+  }
+}

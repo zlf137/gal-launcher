@@ -26,7 +26,7 @@
     "bangumi"
   ],
   "scripts": {
-    "test": "node --test electron/network/*.test.cjs electron/metadata/*.test.cjs electron/integrations/*.test.cjs electron/library/*.test.cjs electron/library/*.test.mjs electron/packaging/*.test.cjs electron/play-session/*.test.cjs electron/window/*.test.cjs electron/search/*.test.cjs src/useLibrary.request-state.test.mjs src/scroll/*.test.mjs tools/library-navigation-contract.test.mjs",
+    "test": "node --test electron/network/*.test.cjs electron/metadata/*.test.cjs electron/integrations/*.test.cjs electron/library/*.test.cjs electron/library/*.test.mjs electron/packaging/*.test.cjs electron/play-session/*.test.cjs electron/widget/*.test.cjs electron/window/*.test.cjs electron/search/*.test.cjs src/useLibrary.request-state.test.mjs src/scroll/*.test.mjs tools/library-navigation-contract.test.mjs",
     "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "build": "tsc && vite build",
     "check": "npm test && npm run build",
@@ -34,6 +34,7 @@
     "dist": "npm run build && electron-builder --win dir",
     "dist:portable": "npm run build && electron-builder --win portable",
     "start": "cross-env NODE_ENV=production electron .",
+    "start:widget": "cross-env NODE_ENV=production electron . --widget",
     "preview": "vite preview --host 127.0.0.1"
   },
   "build": {

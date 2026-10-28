@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, protocol, session, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, powerMonitor, protocol, screen, session, shell, Tray } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
@@ -42,6 +42,15 @@ const {
   reserveGameLaunch
 } = require("./play-session/session-state.cjs");
 const { getAppIconPath } = require("./window/icon-path.cjs");
+const { createWidgetWindow, snapWidgetBounds, WIDGET_SIZE } = require("./widget/window.cjs");
+const { readWidgetState, writeWidgetState } = require("./widget/state.cjs");
+const {
+  ensureDay,
+  pickBubbleText,
+  recordBubble,
+  rollDuration,
+  shouldShowBubble
+} = require("./widget/bubble-scheduler.cjs");
 const { createDomainLimiter } = require("./search/domain-limiter.cjs");
 const { summarizeCoverSearch } = require("./search/cover-search-status.cjs");
 const { COVER_CANDIDATE_CACHE_VERSION, cachedCoverCandidates, hasCachedCoverCandidates } = require("./search/cover-cache.cjs");
@@ -138,6 +147,29 @@ function markPerf(name) {
   const pendingGameLaunches = new Set();
   const activeLaunchScans = new Map();
 
+  const isPerfRun = Boolean(process.env.GAL_LAUNCHER_PERF_USER_DATA);
+  const widgetMode = !isPerfRun && process.argv.includes("--widget");
+  const debugBubbles = process.env.GAL_WIDGET_DEBUG === "1";
+  let widgetWindow = null;
+  let widgetTray = null;
+  let widgetState = null;
+  let widgetDragOffset = null;
+  let widgetTickTimer = null;
+  let widgetInteractive = false;
+  let screenLocked = false;
+  let isQuitting = false;
+  let recentTitleCache = { at: 0, titles: [] };
+
+  const singleInstance = isPerfRun ? true : app.requestSingleInstanceLock();
+  if (!singleInstance) {
+    app.quit();
+  } else {
+    app.on("second-instance", () => {
+      if (app.isReady()) showMainWindow();
+    });
+  }
+  app.setAppUserModelId("local.gal-launcher.app");
+
   const coverDomainLimiter = createDomainLimiter();
   function fetchCover(url, options = {}) {
     return coverDomainLimiter.run(url, 3, () => fetch(url, options));
@@ -203,6 +235,15 @@ function createWindow() {
   mainWindow.on("leave-full-screen", () => mainWindow?.webContents.send("window:fullscreenChanged", false));
   mainWindow.webContents.on("dom-ready", () => markPerf("dom-ready"));
   mainWindow.webContents.on("did-finish-load", () => markPerf("did-finish-load"));
+
+  // The desktop widget lives while the main window is hidden.
+  mainWindow.on("show", () => hideWidgetWindow());
+  mainWindow.on("hide", () => showWidgetWindow());
+  mainWindow.on("close", (event) => {
+    if (isQuitting || !widgetState?.enabled) return;
+    event.preventDefault();
+    mainWindow.hide();
+  });
 
   // Register F12 to toggle DevTools (Ctrl+Shift+I doesn't work with autoHideMenuBar)
   mainWindow.webContents.on("before-input-event", (_event, input) => {
@@ -2845,6 +2886,264 @@ ipcMain.handle("game:launch", async (_event, game, integrationSettings = {}) => 
 
 ipcMain.on("perf:first-paint-ack", () => markPerf("first-paint-ack"));
 
+// ---------------------------------------------------------------------------
+// Desktop widget: a small always-on-top mascot window that opens the launcher.
+// ---------------------------------------------------------------------------
+
+function ensureWidgetWindow() {
+  if (widgetWindow && !widgetWindow.isDestroyed()) return widgetWindow;
+  const created = createWidgetWindow({
+    BrowserWindow,
+    screen,
+    preloadPath: path.join(__dirname, "widget", "preload.cjs"),
+    devServerUrl: process.env.VITE_DEV_SERVER_URL,
+    htmlPath: path.join(__dirname, "..", "dist", "widget.html"),
+    state: widgetState,
+    autoShow: false
+  });
+  widgetWindow = created.window;
+  widgetWindow.on("closed", () => {
+    widgetWindow = null;
+    widgetInteractive = false;
+  });
+  return widgetWindow;
+}
+
+function canShowWidget() {
+  if (!widgetState?.enabled || isQuitting) return false;
+  if (activePlaySessions.size > 0 || pendingGameLaunches.size > 0) return false;
+  return !(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible());
+}
+
+function widgetLog(...args) {
+  if (process.env.GAL_WIDGET_DEBUG === "1") console.log("[widget]", ...args);
+}
+
+function isWidgetSender(event) {
+  return Boolean(widgetWindow && !widgetWindow.isDestroyed() && event.sender === widgetWindow.webContents);
+}
+
+// Clicks pass through the transparent window unless the cursor is over the avatar.
+// The renderer drives this from forwarded mouse moves (see src/widget.tsx).
+function setWidgetInteractive(interactive) {
+  if (!widgetWindow || widgetWindow.isDestroyed()) return;
+  const next = Boolean(interactive);
+  if (widgetInteractive !== next) {
+    widgetInteractive = next;
+    widgetLog("interactive", next);
+    widgetWindow.setIgnoreMouseEvents(!next, { forward: true });
+  }
+}
+
+function showWidgetWindow() {
+  if (!canShowWidget()) return;
+  const win = ensureWidgetWindow();
+  if (win.isVisible()) return;
+  setWidgetInteractive(false);
+  const reveal = () => {
+    if (win.isDestroyed() || !canShowWidget()) return;
+    setWidgetInteractive(false);
+    win.showInactive();
+  };
+  if (win.webContents.isLoadingMainFrame()) win.once("ready-to-show", reveal);
+  else reveal();
+}
+
+function hideWidgetWindow() {
+  if (widgetWindow && !widgetWindow.isDestroyed()) widgetWindow.hide();
+  setWidgetInteractive(false);
+}
+
+function showMainWindow() {
+  if (isQuitting) return;
+  hideWidgetWindow();
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function quitApp() {
+  isQuitting = true;
+  app.quit();
+}
+
+function loginItemTarget() {
+  // Portable builds run from an extracted temp copy; use the original exe.
+  return {
+    path: process.env.PORTABLE_EXECUTABLE_FILE || process.execPath,
+    args: ["--widget"]
+  };
+}
+
+function setOpenAtLogin(enabled) {
+  if (!widgetState) return;
+  widgetState = { ...widgetState, openAtLogin: enabled };
+  writeWidgetState(app.getPath("userData"), widgetState);
+  if (!app.isPackaged) return;
+  try {
+    app.setLoginItemSettings({ openAtLogin: enabled, ...loginItemTarget() });
+  } catch (error) {
+    console.error("[widget] login item update failed", error);
+  }
+}
+
+function syncLoginItem() {
+  if (!app.isPackaged || !widgetState) return;
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: Boolean(widgetState.openAtLogin),
+      ...loginItemTarget()
+    });
+  } catch (error) {
+    console.error("[widget] login item sync failed", error);
+  }
+}
+
+function buildWidgetMenu() {
+  return Menu.buildFromTemplate([
+    { label: "打开 Gal Launcher", click: () => showMainWindow() },
+    { label: "显示挂件", click: () => showWidgetWindow() },
+    { type: "separator" },
+    {
+      label: "开机自启",
+      type: "checkbox",
+      checked: Boolean(widgetState?.openAtLogin),
+      click: (item) => setOpenAtLogin(item.checked)
+    },
+    { type: "separator" },
+    { label: "退出", click: () => quitApp() }
+  ]);
+}
+
+function createWidgetTray() {
+  if (widgetTray) return;
+  try {
+    widgetTray = new Tray(getAppIconPath({
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      projectRoot: path.join(__dirname, "..")
+    }));
+    widgetTray.setToolTip("Gal Launcher");
+    widgetTray.setContextMenu(buildWidgetMenu());
+    widgetTray.on("click", () => showMainWindow());
+  } catch (error) {
+    console.error("[widget] tray creation failed", error);
+  }
+}
+
+function persistWidgetPosition() {
+  if (!widgetWindow || widgetWindow.isDestroyed() || !widgetState) return;
+  const [x, y] = widgetWindow.getPosition();
+  const display = screen.getDisplayNearestPoint({ x, y });
+  const bounds = snapWidgetBounds({ x, y }, display.workArea, WIDGET_SIZE);
+  widgetWindow.setPosition(bounds.x, bounds.y);
+  widgetState = { ...widgetState, bounds };
+  writeWidgetState(app.getPath("userData"), widgetState);
+}
+
+function getRecentTitles() {
+  const now = Date.now();
+  if (now - recentTitleCache.at < 60_000) return recentTitleCache.titles;
+  try {
+    const games = readDocument().games || [];
+    const score = (game) => {
+      const played = Date.parse(game.lastPlayedAt || "");
+      if (Number.isFinite(played)) return played;
+      const created = Date.parse(game.createdAt || "");
+      return Number.isFinite(created) ? created : 0;
+    };
+    const titles = games
+      .slice()
+      .sort((left, right) => score(right) - score(left))
+      .slice(0, 3)
+      .map((game) => String(game.title || "").trim())
+      .filter(Boolean);
+    recentTitleCache = { at: now, titles };
+  } catch {
+    recentTitleCache = { at: now, titles: [] };
+  }
+  return recentTitleCache.titles;
+}
+
+function runBubbleTick() {
+  if (!widgetState || !widgetWindow || widgetWindow.isDestroyed() || !widgetWindow.isVisible()) return;
+  const now = Date.now();
+  const rolled = ensureDay(widgetState.bubble, now, Math.random, debugBubbles);
+  if (rolled !== widgetState.bubble) {
+    widgetState = { ...widgetState, bubble: rolled };
+    writeWidgetState(app.getPath("userData"), widgetState);
+  }
+  const visible = widgetWindow.isVisible();
+  const mainVisible = Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible());
+  if (!shouldShowBubble({
+    state: widgetState,
+    now,
+    idleSeconds: powerMonitor.getSystemIdleTime(),
+    locked: screenLocked,
+    widgetVisible: visible,
+    mainVisible,
+    gameRunning: activePlaySessions.size > 0 || pendingGameLaunches.size > 0,
+    debug: debugBubbles
+  })) return;
+  const text = pickBubbleText(getRecentTitles(), Math.random, widgetState.bubble.lastText);
+  if (!text) return;
+  const durationMs = rollDuration(Math.random, debugBubbles);
+  widgetState = recordBubble(widgetState, { now, random: Math.random, text, debug: debugBubbles });
+  writeWidgetState(app.getPath("userData"), widgetState);
+  widgetLog("bubble", text, durationMs);
+  widgetWindow.webContents.send("widget:bubble", { text, durationMs });
+}
+
+function startBubbleScheduler() {
+  if (widgetTickTimer) clearInterval(widgetTickTimer);
+  widgetTickTimer = setInterval(() => {
+    try { runBubbleTick(); } catch (error) { console.error("[widget] bubble tick failed", error); }
+  }, debugBubbles ? 2_000 : 60_000);
+  widgetTickTimer.unref?.();
+  const firstTick = setTimeout(() => {
+    try { runBubbleTick(); } catch (error) { console.error("[widget] bubble tick failed", error); }
+  }, debugBubbles ? 1_000 : 5_000);
+  firstTick.unref?.();
+}
+
+ipcMain.on("widget:open-main", (event) => {
+  widgetLog("open-main");
+  if (isWidgetSender(event)) showMainWindow();
+});
+ipcMain.on("widget:drag-start", (event) => {
+  widgetLog("drag-start");
+  if (!isWidgetSender(event) || !widgetWindow || widgetWindow.isDestroyed()) return;
+  const cursor = screen.getCursorScreenPoint();
+  const [x, y] = widgetWindow.getPosition();
+  widgetDragOffset = { x: cursor.x - x, y: cursor.y - y };
+  setWidgetInteractive(true);
+});
+ipcMain.on("widget:drag-move", (event) => {
+  if (!isWidgetSender(event) || !widgetWindow || widgetWindow.isDestroyed() || !widgetDragOffset) return;
+  const cursor = screen.getCursorScreenPoint();
+  widgetWindow.setPosition(cursor.x - widgetDragOffset.x, cursor.y - widgetDragOffset.y);
+});
+ipcMain.on("widget:drag-end", (event) => {
+  widgetLog("drag-end");
+  if (!isWidgetSender(event)) return;
+  widgetDragOffset = null;
+  persistWidgetPosition();
+  setWidgetInteractive(true);
+});
+ipcMain.on("widget:set-interactive", (event, interactive) => {
+  if (!isWidgetSender(event)) return;
+  setWidgetInteractive(Boolean(interactive));
+});
+ipcMain.on("widget:show-menu", (event) => {
+  if (!isWidgetSender(event) || !widgetWindow || widgetWindow.isDestroyed()) return;
+  buildWidgetMenu().popup({ window: widgetWindow });
+});
+ipcMain.on("widget:ready", () => widgetLog("ready"));
+
 app.whenReady().then(async () => {
   markPerf("app-ready");
   Menu.setApplicationMenu(null);
@@ -2865,10 +3164,23 @@ app.whenReady().then(async () => {
     filePath = filePath.replace(/\//g, path.sep);
     return net.fetch(pathToFileURL(filePath).toString());
   });
-  createWindow();
+
+  widgetState = readWidgetState(app.getPath("userData"));
+  powerMonitor.on("lock-screen", () => { screenLocked = true; });
+  powerMonitor.on("unlock-screen", () => { screenLocked = false; });
+  syncLoginItem();
+  if (widgetState.enabled || widgetMode) createWidgetTray();
+  startBubbleScheduler();
+
+  if (widgetMode) {
+    showWidgetWindow();
+  } else {
+    createWindow();
+  }
 });
 
 app.on("before-quit", () => {
+  isQuitting = true;
   // Snapshot all active sessions so crash recovery uses exact elapsed time,
   // not wall-clock difference (critical for system shutdown without closing app)
   for (const [sid, s] of activePlaySessions) {
@@ -2886,5 +3198,5 @@ app.on("window-all-closed", () => {
 });
 
 app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  showMainWindow();
 });
