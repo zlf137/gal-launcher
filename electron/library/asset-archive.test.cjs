@@ -30,3 +30,13 @@ test("keeps missing external paths so the user can see that an asset is unavaila
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("leaves remote image urls untouched", () => {
+  const remote = "https://t.vndb.org/cv/78/98578.jpg";
+  const [game] = archiveGameImages(
+    [{ id: "g-1", coverPath: remote, backgroundPath: remote }],
+    path.join(os.tmpdir(), "gal-launcher-asset-remote")
+  );
+  assert.equal(game.coverPath, remote);
+  assert.equal(game.backgroundPath, remote);
+});

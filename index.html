@@ -4,6 +4,20 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Gal Launcher</title>
+    <script>
+      (function () {
+        try {
+          var saved = JSON.parse(localStorage.getItem("gal-launcher-theme") || "{}");
+          var allowed = ["cinema", "editorial", "arcade", "atelier", "monolux", "aurora"];
+          document.documentElement.setAttribute(
+            "data-theme",
+            saved && allowed.indexOf(saved.id) >= 0 ? saved.id : "cinema"
+          );
+        } catch (error) {
+          document.documentElement.setAttribute("data-theme", "cinema");
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

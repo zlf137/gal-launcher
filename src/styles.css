@@ -809,6 +809,12 @@ button {
   animation-delay: calc(var(--i, 0) * 45ms);
 }
 
+/* Only the first screenful performs the entrance animation; later cards are
+   immediately visible instead of waiting ~45ms per index. */
+.shelf-card:nth-child(n + 13) {
+  animation: none;
+}
+
 .shelf-card:active {
   transform: scale(0.97);
 }
@@ -835,7 +841,6 @@ button {
               filter var(--duration-fast) var(--ease-out);
   filter: brightness(0.92) saturate(0.95);
   transform-origin: center bottom;
-  will-change: transform;
 }
 
 .shelf-card:hover .shelf-cover {

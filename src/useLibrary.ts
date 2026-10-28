@@ -206,6 +206,7 @@ export function useLibrary() {
   const [tagFilters, setTagFilters] = useState<string[]>([]);
   const [ctxMenu, setCtxMenu] = useState<{ game: Game; x: number; y: number } | null>(null);
   const hydratedRef = useRef(false);
+  const skipNextSaveRef = useRef(false);
   const selectedIdRef = useRef(selectedId);
   const metadataRequestRef = useRef(0);
   const coverRequestRef = useRef(0);
@@ -261,6 +262,8 @@ export function useLibrary() {
       } catch { /* invalid browsing state falls back to all games */ }
       setSelectedId(loaded.games[0]?.id ?? "");
       hydratedRef.current = true;
+      // Hydration itself must not write the document back to disk.
+      skipNextSaveRef.current = true;
     });
   }, []);
 
@@ -286,6 +289,10 @@ export function useLibrary() {
 
   useEffect(() => {
     if (!hydratedRef.current) return;
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      return;
+    }
     const timer = window.setTimeout(() => { void window.galLauncher.saveLibraryDocument({ version: 2, games, bookshelves }); }, 300);
     return () => window.clearTimeout(timer);
   }, [games, bookshelves]);
@@ -404,36 +411,41 @@ export function useLibrary() {
 
   useEffect(() => {
     if (!selected || !shouldLookupBangumiRating(selected)) return;
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return;
     let cancelled = false;
-    window.galLauncher.lookupBangumiRating(selected).then((rating) => {
-      if (cancelled) return;
-      setGames((current) =>
-        current.map((game) =>
-          game.id === selected.id
-            ? { ...game, ...rating, updatedAt: nowIso() }
-            : game
-        )
-      );
-    }).catch(() => {
-      if (cancelled) return;
-      const attemptedAt = nowIso();
-      const retryAt = new Date(Date.now() + 30_000).toISOString();
-      setGames((current) =>
-        current.map((game) =>
-          game.id === selected.id
-            ? {
-                ...game,
-                bgmRatingStatus: "network_error",
-                bgmRatingLastAttemptAt: attemptedAt,
-                bgmRatingNextRetryAt: retryAt,
-                updatedAt: attemptedAt
-              }
-            : game
-        )
-      );
-    });
+    // Keep the startup window free of rating lookups.
+    const timer = window.setTimeout(() => {
+      window.galLauncher.lookupBangumiRating(selected).then((rating) => {
+        if (cancelled) return;
+        setGames((current) =>
+          current.map((game) =>
+            game.id === selected.id
+              ? { ...game, ...rating, updatedAt: nowIso() }
+              : game
+          )
+        );
+      }).catch(() => {
+        if (cancelled) return;
+        const attemptedAt = nowIso();
+        const retryAt = new Date(Date.now() + 30_000).toISOString();
+        setGames((current) =>
+          current.map((game) =>
+            game.id === selected.id
+              ? {
+                  ...game,
+                  bgmRatingStatus: "network_error",
+                  bgmRatingLastAttemptAt: attemptedAt,
+                  bgmRatingNextRetryAt: retryAt,
+                  updatedAt: attemptedAt
+                }
+              : game
+          )
+        );
+      });
+    }, 1500);
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [selected]);
 

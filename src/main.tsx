@@ -288,18 +288,28 @@ function App() {
     openMenu: () => setIsImmersiveMenuOpen(true)
   });
 
+  const fontsAppliedRef = useRef(false);
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme.id);
-    const linkId = "theme-font";
-    let link = document.getElementById(linkId) as HTMLLinkElement | null;
-    if (!link) {
-      link = document.createElement("link");
-      link.id = linkId;
-      link.rel = "stylesheet";
-      document.head.appendChild(link);
-    }
-    link.href = theme.fontHref;
+    const applyFont = () => {
+      fontsAppliedRef.current = true;
+      const linkId = "theme-font";
+      let link = document.getElementById(linkId) as HTMLLinkElement | null;
+      if (!link) {
+        link = document.createElement("link");
+        link.id = linkId;
+        link.rel = "stylesheet";
+        document.head.appendChild(link);
+      }
+      link.href = theme.fontHref;
+    };
+    // Keep the remote font request out of the startup window; theme switches
+    // after first load still apply immediately.
+    let timer: number | undefined;
+    if (fontsAppliedRef.current) applyFont();
+    else timer = window.setTimeout(applyFont, 1500);
     void loadThemeAssets(theme.id);
+    return () => { if (timer !== undefined) window.clearTimeout(timer); };
   }, [theme]);
 
   const Layout = layouts[theme.id] ?? layouts.cinema;

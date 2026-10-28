@@ -13,6 +13,18 @@ const fixture = path.join(root, "scripts", "perf", "fixtures", profile, "games.j
 if (profile !== "current" && !existsSync(fixture)) throw new Error(`Unknown profile: ${profile}`);
 
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+async function removeWithRetry(target, attempts = 6) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      await rm(target, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      // Chromium can keep handles open briefly after taskkill on Windows.
+      if (!["EBUSY", "EPERM", "ENOTEMPTY"].includes(error?.code)) throw error;
+      await sleep(400);
+    }
+  }
+}
 async function processTreeMemory(pid) {
   const script = "$root=" + Number(pid) + "; $ids=@($root); for($i=0;$i -lt 8;$i++){ $children=Get-CimInstance Win32_Process | Where-Object { $ids -contains $_.ParentProcessId } | Select-Object -ExpandProperty ProcessId; if(-not $children){break}; $ids += $children }; $sum=0; foreach($id in ($ids|Sort-Object -Unique)){ $p=Get-Process -Id $id -ErrorAction SilentlyContinue; if($p){$sum += $p.WorkingSet64} }; @{bytes=$sum; pids=@($ids|Sort-Object -Unique)}|ConvertTo-Json -Compress";
   try { return JSON.parse((await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { windowsHide: true })).stdout); } catch { return { bytes: 0, pids: [] }; }
@@ -44,7 +56,7 @@ async function runOnce(index) {
     try { await execFileAsync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true }); } catch {}
   } else child.kill();
   await sleep(500);
-  if (isolated) await rm(userData, { recursive: true, force: true });
+  if (isolated) await removeWithRetry(userData);
   const peakBytes = Math.max(0, ...samples.map((sample) => sample.bytes || 0));
   return { run: index + 1, profile, peakWorkingSetBytes: peakBytes, marks };
 }

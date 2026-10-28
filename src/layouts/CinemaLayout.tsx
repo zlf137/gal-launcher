@@ -261,7 +261,7 @@ export function CinemaLayout({ lib }: { lib: LibraryController }) {
                     }}
                   >
                     <div className="collection-poster-art">
-                      {posterImage ? <img src={posterImage} alt="" decoding="async" /> : <Gamepad2 size={24} />}
+                      {posterImage ? <img src={posterImage} alt="" decoding="async" loading="lazy" /> : <Gamepad2 size={24} />}
                       {game.playCount > 0 && <span className="collection-badge">{Math.min(game.playCount, 99)}</span>}
                     </div>
                     <div className="collection-poster-title">
@@ -332,9 +332,9 @@ export function CinemaLayout({ lib }: { lib: LibraryController }) {
               }}
             >
               {filteredGames.map((game, index) => (
-                <button key={game.id} className={`shelf-card ${game.id === selected?.id ? "active" : ""}`} data-game-id={game.id} style={{ '--i': index } as React.CSSProperties} onClick={() => setSelectedId(game.id)} onContextMenu={(e) => openContextMenu(e, game)} aria-label={game.title}>
+                <button key={game.id} className={`shelf-card ${game.id === selected?.id ? "active" : ""}`} data-game-id={game.id} style={{ '--i': Math.min(index, 12) } as React.CSSProperties} onClick={() => setSelectedId(game.id)} onContextMenu={(e) => openContextMenu(e, game)} aria-label={game.title}>
                   <div className="shelf-cover">
-                    {imageCache[game.coverPath] ? <img src={imageCache[game.coverPath]} alt="" decoding="async" /> : <Gamepad2 size={30} />}
+                    {imageCache[game.coverPath] ? <img src={imageCache[game.coverPath]} alt="" decoding="async" loading="lazy" /> : <Gamepad2 size={30} />}
                     <span>{game.title}</span>
                   </div>
                 </button>

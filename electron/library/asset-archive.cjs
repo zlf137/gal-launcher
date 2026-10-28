@@ -8,7 +8,10 @@ function isManagedPath(filePath, libraryRoot) {
 }
 
 function archiveImage(filePath, gameId, kind, libraryRoot) {
-  if (!filePath || isManagedPath(filePath, libraryRoot) || !fs.existsSync(filePath)) return filePath || "";
+  if (!filePath) return "";
+  // Remote and data URLs are never local files; avoid a pointless existsSync hit.
+  if (/^(?:https?:|data:|local-file:)/i.test(filePath)) return filePath;
+  if (isManagedPath(filePath, libraryRoot) || !fs.existsSync(filePath)) return filePath;
   const extension = path.extname(filePath).toLowerCase();
   const safeExtension = [".jpg", ".jpeg", ".png", ".webp", ".bmp"].includes(extension) ? extension : ".jpg";
   const destination = path.join(libraryRoot, "assets", `${gameId}-${kind}${safeExtension}`);
